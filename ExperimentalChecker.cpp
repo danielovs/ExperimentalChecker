@@ -82,11 +82,11 @@ public:
         caller = s;
     }
 
-    SVal getValue() {
+    SVal getValue() const {
         return value;
     }
 
-    StringRef getCallerName() {
+    StringRef getCallerName() const {
         return caller;
     }
 };
@@ -127,7 +127,7 @@ namespace {
 }
 
 REGISTER_SET_WITH_PROGRAMSTATE(aditionalValueData, taintPropagationData *)
-REGISTER_LIST_WITH_PROGRAMSTATE(callStackData, callStackEntry *)
+REGISTER_SET_WITH_PROGRAMSTATE(callStackData, callStackEntry *)
 
 ExperimentalChecker::ExperimentalChecker() {
 
@@ -143,6 +143,9 @@ void ExperimentalChecker::checkPreCall(const CallEvent &Call, CheckerContext &C)
         return;
     }
     const Decl * D = Call.getDecl();
+    if (!D) {
+        return;
+    }
     const FunctionDecl *FD = D->getAsFunction();
     if (!FD || FD->getKind() != Decl::Function)
         return;
@@ -152,10 +155,10 @@ void ExperimentalChecker::checkPreCall(const CallEvent &Call, CheckerContext &C)
 void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C) const {
     ProgramStateRef state = C.getState();
     const Expr *CallE = Call.getOriginExpr();
-    int tmpTState;
     if (!CallE) {
         return;
     }
+    int tmpTState;
     if (Call.getResultType()->isVoidType()) {
         const IdentifierInfo *FInfo = Call.getCalleeIdentifier();
         if (FInfo) {
@@ -172,20 +175,33 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                 if (SR.compare("malloc") == 0) {
                     if (!Call.getArgSVal(0).isConstant()) {
                         tmpTState = getTaintState(state, Call.getArgSVal(0).getAsRegion());
-                        //#ifdef DEBUG
                         callStackDataTy cStack = state->get<callStackData>();
-                        llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - " << FInfo->getNameStart() << " - " << tmpTState << " - " << Call.getArgSVal(0) << " - Size - " << getSetSize(cStack) << ".\n";
-                        //#endif
-                        if (tmpTState == Tainted) {
-                            state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
+                        unsigned int cStackSize = getSetSize(cStack);
+                        if (cStackSize != 1) {
+                            if (tmpTState == Tainted) {
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
+                                //#ifdef DEBUG
+                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - TNT - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
+                                //#endif
+                            }
+                            if (tmpTState == Dependent) {
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
+                                //#ifdef DEBUG
+                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP- " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
+                                //#endif
+                            }
+                        } else {
+                            callStackDataTy::iterator cStackIterator = cStack.begin();
+                            const callStackEntry *dependency = *cStackIterator;
+                            if (dependency->getCallerName().compare("strlen") == 0) {
+
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), dependency->getValue().getAsRegion()));
+                            } else {
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
+                            }
+                            state = state->remove<callStackData>();
                             //#ifdef DEBUG
-                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - TNT - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
-                            //#endif
-                        }
-                        if (tmpTState == Dependent) {
-                            state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
-                            //#ifdef DEBUG
-                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP- " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
+                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call Stack- " << FInfo->getNameStart() << " - " << tmpTState << " - " << Call.getArgSVal(0) << " - Value - " << getSetSize(cStack) << ".\n";
                             //#endif
                         }
                     }
@@ -237,28 +253,40 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 }
 
 void ExperimentalChecker::checkBind(SVal Loc, SVal Val, const Stmt* S, CheckerContext & C) const {
+    if (!S) {
+        return;
+    }
     ProgramStateRef state = C.getState();
     const MemRegion *VMR = Val.getAsRegion();
+    if (!VMR) {
+        return;
+    }
     QualType valTy;
     switch (S->getStmtClass()) {
         case Stmt::BinaryOperatorClass:
         {
-            if (VMR) {
-                SymbolRef sRef = Val.getLocSymbolInBase();
-                valTy = sRef->getType();
-                if (!valTy->isPointerType()) {
+
+            SymbolRef sRef = Val.getLocSymbolInBase();
+            if (!sRef) {
+                break;
+            }
+            valTy = sRef->getType();
+            if (!valTy->isPointerType()) {
 #ifdef DEBUG
-                    llvm::outs() << "Not pointer " << Val << ".\n";
+                llvm::outs() << "Not pointer " << Val << ".\n";
 #endif
-                    break;
-                }
-                const Type *TP = valTy.getTypePtr();
-                QualType PointeeT = TP->getPointeeType();
-                if (!PointeeT.isNull()) {
+                break;
+            }
+            const Type *TP = valTy.getTypePtr();
+            if (!TP) {
+                break;
+            }
+            QualType PointeeT = TP->getPointeeType();
+            if (!PointeeT.isNull()) {
 #ifdef DEBUG
-                    llvm::outs() << "NULL Pointer " << Val << ".\n";
+                llvm::outs() << "NULL Pointer " << Val << ".\n";
 #endif
-                }
+                break;
             }
             break;
         }
@@ -276,8 +304,17 @@ void ExperimentalChecker::checkBind(SVal Loc, SVal Val, const Stmt* S, CheckerCo
 void ExperimentalChecker::checkPreStmt(const CallExpr* CE, CheckerContext & C) const {
     ProgramStateRef state = C.getState();
     const AnalysisDeclContext *ADC = C.getCurrentAnalysisDeclContext();
+    if (!ADC) {
+        return;
+    }
     const Decl *D = ADC->getDecl();
+    if (!D) {
+        return;
+    }
     const FunctionDecl *FD = D->getAsFunction();
+    if (!FD) {
+        return;
+    }
     if (C.isCLibraryFunction(FD, "main")) {
         int nParams = FD->getNumParams();
         for (int i = 0; i < nParams; ++i) {
@@ -293,6 +330,9 @@ void ExperimentalChecker::checkPreStmt(const CallExpr* CE, CheckerContext & C) c
 void ExperimentalChecker::checkPostStmt(const Expr *E, CheckerContext & C) const {
     ProgramStateRef state = C.getState();
     const LocationContext *Loc = C.getLocationContext();
+    if (!Loc) {
+        return;
+    }
     SVal S = state->getSVal(E, Loc);
     const ElementRegion *ER = NULL;
     const VarRegion *VR = NULL;
@@ -346,12 +386,24 @@ void ExperimentalChecker::checkPostStmt(const Expr *E, CheckerContext & C) const
 void ExperimentalChecker::checkLocation(SVal Loc, bool IsLoad, const Stmt* S, CheckerContext & C) const {
     ProgramStateRef state = C.getState();
     const MemRegion *MR = Loc.getAsRegion();
+    if (!MR) {
+        return;
+    }
     switch (S->getStmtClass()) {
         case Stmt::ImplicitCastExprClass:
         {
             const ImplicitCastExpr *ICE = cast<ImplicitCastExpr>(S);
+            if (!ICE) {
+                break;
+            }
             const Expr *Ex = ICE->getSubExpr();
+            if (!Ex) {
+                break;
+            }
             const LocationContext *Loc = C.getLocationContext();
+            if (!Loc) {
+                break;
+            }
             SVal SValue = state->getSVal(Ex, Loc);
             if (IsLoad) {
 #ifdef DEBUG
@@ -367,7 +419,13 @@ void ExperimentalChecker::checkLocation(SVal Loc, bool IsLoad, const Stmt* S, Ch
         case Stmt::DeclRefExprClass:
         {
             const DeclRefExpr *DRE = cast<DeclRefExpr>(S);
+            if (!DRE) {
+                break;
+            }
             const Decl *DL = DRE->getDecl();
+            if (!DL) {
+                break;
+            }
             if (DL->getKind() == Decl::Var) {
                 if (IsLoad) {
 #ifdef DEBUG
@@ -384,7 +442,13 @@ void ExperimentalChecker::checkLocation(SVal Loc, bool IsLoad, const Stmt* S, Ch
         case Stmt::MemberExprClass:
         {
             const MemberExpr *ME = cast<MemberExpr>(S);
+            if (!ME) {
+                break;
+            }
             const ValueDecl *VD = ME->getMemberDecl();
+            if (!VD) {
+                break;
+            }
             if (IsLoad) {
 #ifdef DEBUG
                 llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(S->getLocStart()) << ")" << " - Load MC from <" << MR->getString() << "> value " << VD->getNameAsString() << ".\n";
@@ -478,7 +542,8 @@ unsigned int ExperimentalChecker::getSetSize(T &Set) const {
     typename T::iterator sEnd = Set.end();
     typename T::iterator I = Set.begin();
     int i = 0;
-    for (; I != sEnd; ++I, ++i) { }
+    for (; I != sEnd; ++I, ++i) {
+    }
     return i;
 }
 
