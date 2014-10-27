@@ -180,15 +180,15 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                         if (cStackSize != 1) {
                             if (tmpTState == Tainted) {
                                 state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
-                                //#ifdef DEBUG
+#ifdef DEBUG
                                 llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - TNT - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
-                                //#endif
+#endif
                             }
                             if (tmpTState == Dependent) {
                                 state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
-                                //#ifdef DEBUG
+#ifdef DEBUG
                                 llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP- " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
-                                //#endif
+#endif
                             }
                         } else {
                             callStackDataTy::iterator cStackIterator = cStack.begin();
@@ -200,9 +200,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                 state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
                             }
                             state = state->remove<callStackData>();
-                            //#ifdef DEBUG
+#ifdef DEBUG
                             llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call Stack- " << FInfo->getNameStart() << " - " << tmpTState << " - " << Call.getArgSVal(0) << " - Value - " << getSetSize(cStack) << ".\n";
-                            //#endif
+#endif
                         }
                     }
                 }
@@ -226,6 +226,7 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                         }
                     }
                 }
+
 #ifdef DEBUG
                 llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
 #endif
