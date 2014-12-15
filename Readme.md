@@ -1,7 +1,6 @@
 # Experimental Checker
 
 ## Getting Started
-* Tested with LLVM 3.5.0
 1. Checkout LLVM:
 		$ svn co http://llvm.org/svn/llvm-project/llvm/trunk llvm
 2. Checkout Clang:
