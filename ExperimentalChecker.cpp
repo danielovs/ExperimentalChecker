@@ -68,7 +68,7 @@ public:
         value = v;
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = dep;
-        //llvm::outs() << "Add dependency: " << dep << "\n";
+
     }
 
     ~taintPropagationData() {
@@ -158,17 +158,23 @@ namespace {
     check::Location,
     check::Event<ImplicitNullDerefEvent> > {
     private:
-        mutable std::unique_ptr<BuiltinBug> BT_useTaintValueBug;
+        mutable std::unique_ptr<BuiltinBug> BT_useTaintedValueBug;
         mutable std::unique_ptr<BuiltinBug> BT_sizeMismatchBug;
+        mutable std::unique_ptr<BuiltinBug> BT_useTaintedStreamBug;
 
         inline void initTaintBugType() const {
-            if (!BT_useTaintValueBug)
-                BT_useTaintValueBug.reset(new BuiltinBug(this, "Tainted value used as an argument", "Possibility of out-of-bounds access"));
+            if (!BT_useTaintedValueBug)
+                BT_useTaintedValueBug.reset(new BuiltinBug(this, "Tainted value used as an argument", "Possibility of out-of-bounds access"));
         }
 
         inline void initSizeBugType() const {
             if (!BT_sizeMismatchBug)
                 BT_sizeMismatchBug.reset(new BuiltinBug(this, "Size mismatch", "Possibility of out-of-bounds access"));
+        }
+        
+        inline void initStreamBugType() const {
+            if (!BT_useTaintedStreamBug)
+                BT_useTaintedStreamBug.reset(new BuiltinBug(this, "Reading from tainted source", "Reading from tainted source"));
         }
 
     public:
@@ -353,9 +359,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                 if (!depenency) {
                                     state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
                                     if (ExplodedNode * N = C.addTransition()) {
-                                        if (!BT_useTaintValueBug)
+                                        if (!BT_useTaintedValueBug)
                                             initTaintBugType();
-                                        BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                                        BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
                                         report->addRange(Call.getSourceRange());
                                         C.emitReport(report);
                                     }
@@ -363,9 +369,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                     if (!advanceEQ(Call.getArgSVal(0).getAsRegion(), depenency)) {
                                         state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
                                         if (ExplodedNode * N = C.addTransition()) {
-                                            if (!BT_useTaintValueBug)
+                                            if (!BT_useTaintedValueBug)
                                                 initTaintBugType();
-                                            BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                                            BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
                                             report->addRange(Call.getSourceRange());
                                             C.emitReport(report);
                                         }
@@ -374,9 +380,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                             } else {
                                 state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
                                 if (ExplodedNode * N = C.addTransition()) {
-                                    if (!BT_useTaintValueBug)
+                                    if (!BT_useTaintedValueBug)
                                         initTaintBugType();
-                                    BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                                    BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
                                     report->addRange(Call.getSourceRange());
                                     C.emitReport(report);
                                 }
@@ -415,14 +421,27 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
             }
             if (nArgs == 3) {
                 if (SR.compare("read") == 0) {
-                    if (getTaintState(state, Call.getArgSVal(2).getAsRegion()) == Tainted) {
+                    taintState tmpTaintState = getTaintState(state, Call.getArgSVal(2).getAsRegion());
+                    if (tmpTaintState == Tainted) {
                         if (!isMRStored(state, Call.getArgSVal(1).getAsRegion())) {
                             state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
                         }
                         if (ExplodedNode * N = C.addTransition()) {
-                            if (!BT_useTaintValueBug)
+                            if (!BT_useTaintedValueBug)
                                 initTaintBugType();
-                            BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                            BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
+                            report->addRange(Call.getSourceRange());
+                            C.emitReport(report);
+                        }
+                    } else {
+                        taintState tmpTaintState = getTaintState(state, Call.getArgSVal(0).getAsRegion());
+                        if (tmpTaintState == Tainted) {
+                            state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
+                        }
+                        if (ExplodedNode * N = C.addTransition()) {
+                            if (!BT_useTaintedValueBug)
+                                initStreamBugType();
+                            BugReport *report = new BugReport(*BT_useTaintedStreamBug, BT_useTaintedStreamBug->getDescription(), N);
                             report->addRange(Call.getSourceRange());
                             C.emitReport(report);
                         }
@@ -449,6 +468,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                             }
                             //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(2) << ".\n";
                             if (sValSize.getZExtValue() > sValDstSize.getZExtValue()) {
+                                if (!isMRStored(state, Call.getArgSVal(0).getAsRegion())) {
+                                    state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
+                                }
                                 if (ExplodedNode * N = C.addTransition()) {
                                     if (!BT_sizeMismatchBug)
                                         initSizeBugType();
@@ -481,9 +503,9 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                     }
                     if (tmpTaintState == Tainted) {
                         if (ExplodedNode * N = C.addTransition()) {
-                            if (!BT_useTaintValueBug)
+                            if (!BT_useTaintedValueBug)
                                 initSizeBugType();
-                            BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                            BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
                             report->addRange(Call.getSourceRange());
                             C.emitReport(report);
                         }
@@ -495,14 +517,17 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 #endif
                         if (tmpTaintState == Tainted) {
                             if (ExplodedNode * N = C.addTransition()) {
-                                if (!BT_useTaintValueBug)
+                                if (!BT_useTaintedValueBug)
                                     initSizeBugType();
-                                BugReport *report = new BugReport(*BT_useTaintValueBug, BT_useTaintValueBug->getDescription(), N);
+                                BugReport *report = new BugReport(*BT_useTaintedValueBug, BT_useTaintedValueBug->getDescription(), N);
                                 report->addRange(Call.getSourceRange());
                                 C.emitReport(report);
                             }
                         }
                     }
+                }
+                if (SR.compare("socket") == 0) {
+                    state = state->add<callStackData>(new callStackEntry(C.getSVal(CallE), FInfo->getName()));
                 }
             }
         }
@@ -517,43 +542,56 @@ void ExperimentalChecker::checkBind(SVal Loc, SVal Val, const Stmt* S, CheckerCo
     ProgramStateRef state = C.getState();
     const MemRegion *VMR = Val.getAsRegion();
     if (!VMR) {
-        return;
-    }
-    QualType valTy;
-    switch (S->getStmtClass()) {
-        case Stmt::BinaryOperatorClass:
-        {
-
-            SymbolRef sRef = Val.getLocSymbolInBase();
-            if (!sRef) {
-                break;
+        callStackDataTy cStack = state->get<callStackData>();
+        unsigned int cStackSize = getSetSize(cStack);
+        if (cStackSize == 1) {
+            callStackDataTy::iterator cStackIterator = cStack.begin();
+            const callStackEntry *caller = *cStackIterator;
+            if (caller->getCallerName().compare("socket") == 0) {
+                state = state->add<aditionalValueData>(new taintPropagationData(Loc.getAsRegion(), Tainted));
             }
-            valTy = sRef->getType();
-            if (!valTy->isPointerType()) {
-#ifdef DEBUG
-                llvm::outs() << "Not pointer " << Val << ".\n";
-#endif
-                break;
-            }
-            const Type *TP = valTy.getTypePtr();
-            if (!TP) {
-                break;
-            }
-            QualType PointeeT = TP->getPointeeType();
-            if (!PointeeT.isNull()) {
-#ifdef DEBUG
-                llvm::outs() << "NULL Pointer " << Val << ".\n";
-#endif
-                break;
-            }
-            break;
+            state = state->remove<callStackData>();
+            cStack = state->get<callStackData>();
+            cStackSize = getSetSize(cStack);
         }
-        default:
-        {
+    } else {
+        QualType valTy;
+
+        switch (S->getStmtClass()) {
+            case Stmt::BinaryOperatorClass:
+            {
+
+                SymbolRef sRef = Val.getLocSymbolInBase();
+                if (!sRef) {
+                    break;
+                }
+                valTy = sRef->getType();
+                if (!valTy->isPointerType()) {
 #ifdef DEBUG
-            llvm::outs() << "Other operator: " << S->getStmtClassName() << Loc << "  to " << Val << ".\n";
+                    llvm::outs() << "Not pointer " << Val << ".\n";
 #endif
-            break;
+                    break;
+                }
+                const Type *TP = valTy.getTypePtr();
+                if (!TP) {
+                    break;
+                }
+                QualType PointeeT = TP->getPointeeType();
+                if (!PointeeT.isNull()) {
+#ifdef DEBUG
+                    llvm::outs() << "NULL Pointer " << Val << ".\n";
+#endif
+                    break;
+                }
+                break;
+            }
+            default:
+            {
+#ifdef DEBUG
+                llvm::outs() << "Other operator: " << S->getStmtClassName() << Loc << "  to " << Val << ".\n";
+#endif
+                break;
+            }
         }
     }
     C.addTransition(state);
