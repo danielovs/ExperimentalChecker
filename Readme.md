@@ -5,9 +5,11 @@
 1. Checkout LLVM:
 	$ svn co http://llvm.org/svn/llvm-project/llvm/trunk llvm
 2. Checkout Clang:
-	$ cd llvm/tools
-	$ svn co http://llvm.org/svn/llvm-project/cfe/trunk clang
-	$ cd ../..
+		'''
+		$ cd llvm/tools
+		$ svn co http://llvm.org/svn/llvm-project/cfe/trunk clang
+		$ cd ../..
+		'''
 3. Checkout extra Clang Tools:
 	$ cd llvm/tools/clang/tools
 	$ svn co http://llvm.org/svn/llvm-project/clang-tools-extra/trunk extra
