@@ -44,7 +44,7 @@
 ```sh
 		$ scan-build -enable-checker alpha.security.ExperimentalChecker --use-analyzer $CLANG_PATH make
 ```
-	* Where `$CLANG_PATH` points to _clang_ binary
+	* Where $CLANG_PATH points to clang binary
 2. Results will be stored to _/tmp_ as _scan_build-*_
 
 ## How it works
