@@ -31,7 +31,8 @@ enum taintState {
 
 class taintPropagationData {
 private:
-    const MemRegion *value;
+    const MemRegion *mReg;
+    const SVal *sV;
     bool isNull;
     taintState isTainted;
     llvm::APInt estimatedSize;
@@ -41,7 +42,26 @@ public:
     taintPropagationData(const MemRegion *v, taintState ts) {
         isNull = false;
         isTainted = ts;
-        value = v;
+        mReg = v;
+        sV = NULL;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
+    taintPropagationData(const SVal *v, taintState ts) {
+        isNull = false;
+        isTainted = ts;
+        mReg = NULL;
+        sV = v;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
+    taintPropagationData(const MemRegion *vR, const SVal *vS, taintState ts) {
+        isNull = false;
+        isTainted = ts;
+        mReg = vR;
+        sV = vS;
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
@@ -49,23 +69,82 @@ public:
     taintPropagationData(const MemRegion *v, bool n) {
         isNull = n;
         isTainted = OK;
-        value = v;
+        mReg = v;
+        sV = NULL;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
+    taintPropagationData(const SVal *v, bool n) {
+        isNull = n;
+        isTainted = OK;
+        mReg = NULL;
+        sV = v;
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
 
+    taintPropagationData(const MemRegion *vR, const SVal *vS, bool n) {
+        isNull = n;
+        isTainted = OK;
+        mReg = vR;
+        sV = vS;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
     taintPropagationData(const MemRegion *v, bool n, taintState ts) {
         isNull = n;
         isTainted = ts;
-        value = v;
+        mReg = v;
+        sV = NULL;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
+    taintPropagationData(const SVal *v, bool n, taintState ts) {
+        isNull = n;
+        isTainted = ts;
+        mReg = NULL;
+        sV = v;
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
 
+    taintPropagationData(const MemRegion *vR, const SVal *vS, bool n, taintState ts) {
+        isNull = n;
+        isTainted = ts;
+        mReg = vR;
+        sV = vS;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = NULL;
+    }
+    
     taintPropagationData(const MemRegion *v, const MemRegion *dep) {
         isNull = false;
         isTainted = Dependent;
-        value = v;
+        mReg = v;
+        sV = NULL;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = dep;
+
+    }
+    
+    taintPropagationData(const SVal *v, const MemRegion *dep) {
+        isNull = false;
+        isTainted = Dependent;
+        mReg = NULL;
+        sV = v;
+        estimatedSize = MAX_SIZE(estimatedSize);
+        dependOn = dep;
+
+    }
+    
+    taintPropagationData(const MemRegion *vR, const SVal *vS, const MemRegion *dep) {
+        isNull = false;
+        isTainted = Dependent;
+        mReg = vR;
+        sV = vS;
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = dep;
 
@@ -76,23 +155,23 @@ public:
 
     bool operator==(const MemRegion *v) {
 #ifdef DEBUG
-        llvm::outs() << "OP== - Start: " << value->getString() << " " << v->getString() << ".\n";
+        llvm::outs() << "OP== - Start: " << mReg->getString() << " " << v->getString() << ".\n";
 #endif
-        if (value == v) {
+        if (mReg == v) {
 #ifdef DEBUG
-            llvm::outs() << "OP== - True - P: " << value->getString() << " - " << v->getString() << ".\n";
+            llvm::outs() << "OP== - True - P: " << mReg->getString() << " - " << v->getString() << ".\n";
 #endif
             return true;
         } else {
-            if (value->getString().compare(v->getString()) == 0) {
+            if (mReg->getString().compare(v->getString()) == 0) {
 #ifdef DEBUG
-                llvm::outs() << "OP== - True - S: " << value->getString() << " - " << v->getString() << ".\n";
+                llvm::outs() << "OP== - True - S: " << mReg->getString() << " - " << v->getString() << ".\n";
 #endif    
                 return true;
             }
         }
 #ifdef DEBUG
-        llvm::outs() << "OP== - False: " << value->getString() << " - " << v->getString() << ".\n";
+        llvm::outs() << "OP== - False: " << mReg->getString() << " - " << v->getString() << ".\n";
 #endif
         return false;
     }
@@ -106,7 +185,7 @@ public:
     }
 
     MemRegion const * getMemRegion() const {
-        return value;
+        return mReg;
     }
 
     MemRegion const * getDependencyMemRegion() const {
@@ -171,7 +250,7 @@ namespace {
             if (!BT_sizeMismatchBug)
                 BT_sizeMismatchBug.reset(new BuiltinBug(this, "Size mismatch", "Possibility of out-of-bounds access"));
         }
-        
+
         inline void initStreamBugType() const {
             if (!BT_useTaintedStreamBug)
                 BT_useTaintedStreamBug.reset(new BuiltinBug(this, "Reading from tainted source", "Reading from tainted source"));
@@ -436,17 +515,19 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                     } else {
                         taintState tmpTaintState = getTaintState(state, Call.getArgSVal(0).getAsRegion());
                         if (tmpTaintState == Tainted) {
-                            state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
-                        }
-                        if (ExplodedNode * N = C.addTransition()) {
-                            if (!BT_useTaintedValueBug)
-                                initStreamBugType();
-                            BugReport *report = new BugReport(*BT_useTaintedStreamBug, BT_useTaintedStreamBug->getDescription(), N);
-                            report->addRange(Call.getSourceRange());
-                            C.emitReport(report);
+                        llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - read - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
+                            if (!isMRStored(state, Call.getArgSVal(1).getAsRegion())) {
+                                state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
+                            }
+                            if (ExplodedNode * N = C.addTransition()) {
+                                if (!BT_useTaintedValueBug)
+                                    initStreamBugType();
+                                BugReport *report = new BugReport(*BT_useTaintedStreamBug, BT_useTaintedStreamBug->getDescription(), N);
+                                report->addRange(Call.getSourceRange());
+                                C.emitReport(report);
+                            }
                         }
                     }
-
                 }
                 if (SR.compare("memcpy") == 0) {
                     taintState tmpTaintState = getTaintState(state, Call.getArgSVal(1).getAsRegion());
@@ -550,9 +631,7 @@ void ExperimentalChecker::checkBind(SVal Loc, SVal Val, const Stmt* S, CheckerCo
             if (caller->getCallerName().compare("socket") == 0) {
                 state = state->add<aditionalValueData>(new taintPropagationData(Loc.getAsRegion(), Tainted));
             }
-            state = state->remove<callStackData>();
-            cStack = state->get<callStackData>();
-            cStackSize = getSetSize(cStack);
+            //state = state->remove<callStackData>();            
         }
     } else {
         QualType valTy;
@@ -651,8 +730,10 @@ void ExperimentalChecker::checkPostStmt(const Expr *E, CheckerContext & C) const
 
     const MemRegion *MR = S.getAsRegion();
     if (!MR) {
+        //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Not MR " << S << ".\n";
         return;
     }
+    //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Post STMT Kind: " << MR->getString() << " - " << S << " " << MR->getKind() << ".\n";
     switch (MR->getKind()) {
         case MemRegion::ElementRegionKind:
             //ER = MR->getAs<ElementRegion>();
