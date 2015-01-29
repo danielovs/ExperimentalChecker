@@ -47,7 +47,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const SVal *v, taintState ts) {
         isNull = false;
         isTainted = ts;
@@ -56,7 +56,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const MemRegion *vR, const SVal *vS, taintState ts) {
         isNull = false;
         isTainted = ts;
@@ -74,7 +74,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const SVal *v, bool n) {
         isNull = n;
         isTainted = OK;
@@ -92,7 +92,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const MemRegion *v, bool n, taintState ts) {
         isNull = n;
         isTainted = ts;
@@ -101,7 +101,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const SVal *v, bool n, taintState ts) {
         isNull = n;
         isTainted = ts;
@@ -119,7 +119,7 @@ public:
         estimatedSize = MAX_SIZE(estimatedSize);
         dependOn = NULL;
     }
-    
+
     taintPropagationData(const MemRegion *v, const MemRegion *dep) {
         isNull = false;
         isTainted = Dependent;
@@ -129,7 +129,7 @@ public:
         dependOn = dep;
 
     }
-    
+
     taintPropagationData(const SVal *v, const MemRegion *dep) {
         isNull = false;
         isTainted = Dependent;
@@ -139,7 +139,7 @@ public:
         dependOn = dep;
 
     }
-    
+
     taintPropagationData(const MemRegion *vR, const SVal *vS, const MemRegion *dep) {
         isNull = false;
         isTainted = Dependent;
@@ -188,6 +188,10 @@ public:
         return mReg;
     }
 
+    SVal const * getSVal() const {
+        return sV;
+    }
+
     MemRegion const * getDependencyMemRegion() const {
         return dependOn;
     }
@@ -205,17 +209,17 @@ public:
 
 class callStackEntry {
 private:
-    SVal value;
+    SVal *value;
     StringRef caller;
 
 public:
 
-    callStackEntry(SVal v, StringRef s) {
+    callStackEntry(SVal *v, StringRef s) {
         value = v;
         caller = s;
     }
 
-    SVal getValue() const {
+    SVal * getValue() const {
         return value;
     }
 
@@ -266,8 +270,10 @@ namespace {
         void checkPreStmt(const CallExpr *CE, CheckerContext & C) const;
         void checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext & C) const;
         void checkEvent(ImplicitNullDerefEvent Event) const;
-        aditionalValueDataTy::iterator findAditionalValue(aditionalValueDataTy::iterator begin, aditionalValueDataTy::iterator end, const MemRegion*MR) const;
+        aditionalValueDataTy::iterator findAditionalValue(aditionalValueDataTy::iterator begin, aditionalValueDataTy::iterator end, const MemRegion *MR) const;
+        aditionalValueDataTy::iterator findAditionalValue(aditionalValueDataTy::iterator begin, aditionalValueDataTy::iterator end, SVal *SV) const;
         taintState getTaintState(ProgramStateRef State, const MemRegion *MR) const;
+        taintState getTaintState(ProgramStateRef State, SVal *SV) const;
         llvm::APInt getMREstimatedSize(ProgramStateRef State, const MemRegion *MR) const;
         bool isMRStored(ProgramStateRef State, const MemRegion *MR) const;
         const MemRegion * getDependency(ProgramStateRef State, const MemRegion *MR) const;
@@ -337,20 +343,23 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 #endif
                         if (cStackSize != 1) {
                             if (tmpTState == Tainted) {
-                                taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), Tainted);
+                                SVal *tmpSV = new SVal(C.getSVal(CallE));
+                                taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, Tainted);
                                 state = state->add<aditionalValueData>(tmpData);
 #ifdef DEBUG
                                 llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - TNT - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
 #endif
                             } else {
                                 if (tmpTState == Dependent) {
-                                    taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion());
+                                    SVal *tmpSV = new SVal(C.getSVal(CallE));
+                                    taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, Call.getArgSVal(0).getAsRegion());
                                     state = state->add<aditionalValueData>(tmpData);
 #ifdef DEBUG
                                     llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
 #endif
                                 } else {
-                                    taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), OK);
+                                    SVal *tmpSV = new SVal(C.getSVal(CallE));
+                                    taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, OK);
                                     state = state->add<aditionalValueData>(tmpData);
                                 }
                             }
@@ -364,11 +373,12 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 #ifdef DEBUG
                             llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0) << ".\n";
 #endif
+                            SVal *tmpSV = new SVal(C.getSVal(CallE));
                             if (dependency->getCallerName().compare("strlen") == 0) {
                                 //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - Add - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << dependency->getValue() << ".\n";
-                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), dependency->getValue().getAsRegion()));
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, dependency->getValue()->getAsRegion()));
                             } else {
-                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), Call.getArgSVal(0).getAsRegion()));
+                                state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, Call.getArgSVal(0).getAsRegion()));
                             }
                             state = state->remove<callStackData>();
 #ifdef DEBUG
@@ -384,7 +394,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                             case nonloc::ConcreteIntKind:
                             {
                                 const nonloc::ConcreteInt& ConstArgInt = ArgZ.castAs<nonloc::ConcreteInt>();
-                                taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), OK);
+                                SVal *tmpSV = new SVal(C.getSVal(CallE));
+                                taintPropagationData *tmpData = new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, OK);
                                 tmpData->setEstiamtedSize(ConstArgInt.getValue());
                                 state = state->add<aditionalValueData>(tmpData);
 #ifdef DEBUG
@@ -422,7 +433,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 #ifdef DEBUG
                     llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - AP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << ".\n";
 #endif
-                    state = state->add<callStackData>(new callStackEntry(C.getSVal(CallE), FInfo->getName()));
+                    SVal *tmpSV = new SVal(C.getSVal(CallE));
+                    state = state->add<callStackData>(new callStackEntry(tmpSV, FInfo->getName()));
                 }
             }
             if (nArgs == 2) {
@@ -436,7 +448,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                             if (tmpDestTaintState == Dependent) {
                                 const MemRegion * depenency = getDependency(state, Call.getArgSVal(0).getAsRegion());
                                 if (!depenency) {
-                                    state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
+                                    SVal *tmpSV = new SVal(Call.getArgSVal(0));
+                                    state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), tmpSV, Tainted));
                                     if (ExplodedNode * N = C.addTransition()) {
                                         if (!BT_useTaintedValueBug)
                                             initTaintBugType();
@@ -446,7 +459,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                     }
                                 } else {
                                     if (!advanceEQ(Call.getArgSVal(0).getAsRegion(), depenency)) {
-                                        state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
+                                        SVal *tmpSV = new SVal(Call.getArgSVal(0));
+                                        state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), tmpSV, Tainted));
                                         if (ExplodedNode * N = C.addTransition()) {
                                             if (!BT_useTaintedValueBug)
                                                 initTaintBugType();
@@ -457,7 +471,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                     }
                                 }
                             } else {
-                                state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
+                                SVal *tmpSV = new SVal(Call.getArgSVal(0));
+                                state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), tmpSV, Tainted));
                                 if (ExplodedNode * N = C.addTransition()) {
                                     if (!BT_useTaintedValueBug)
                                         initTaintBugType();
@@ -503,7 +518,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                     taintState tmpTaintState = getTaintState(state, Call.getArgSVal(2).getAsRegion());
                     if (tmpTaintState == Tainted) {
                         if (!isMRStored(state, Call.getArgSVal(1).getAsRegion())) {
-                            state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
+                            SVal *tmpSV = new SVal(Call.getArgSVal(1));
+                            state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), tmpSV, Tainted));
                         }
                         if (ExplodedNode * N = C.addTransition()) {
                             if (!BT_useTaintedValueBug)
@@ -515,9 +531,10 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                     } else {
                         taintState tmpTaintState = getTaintState(state, Call.getArgSVal(0).getAsRegion());
                         if (tmpTaintState == Tainted) {
-                        llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - read - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
+                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - read - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
                             if (!isMRStored(state, Call.getArgSVal(1).getAsRegion())) {
-                                state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), Tainted));
+                                SVal *tmpSV = new SVal(Call.getArgSVal(1));
+                                state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(1).getAsRegion(), tmpSV, Tainted));
                             }
                             if (ExplodedNode * N = C.addTransition()) {
                                 if (!BT_useTaintedValueBug)
@@ -529,7 +546,7 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                         }
                     }
                 }
-                if (SR.compare("memcpy") == 0) {
+                if ((SR.compare("memcpy") == 0) || (SR.compare("strncpy") == 0)) {
                     taintState tmpTaintState = getTaintState(state, Call.getArgSVal(1).getAsRegion());
                     if (tmpTaintState == OK) {
 #ifdef DEBUG
@@ -545,12 +562,32 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                 const nonloc::ConcreteInt& ConstArgInt = Call.getArgSVal(2).castAs<nonloc::ConcreteInt>();
                                 sValSize = ConstArgInt.getValue();
                             } else {
-                                sValSize = getMREstimatedSize(state, Call.getArgSVal(2).getAsRegion());
+                                callStackDataTy cStack = state->get<callStackData>();
+                                unsigned int cStackSize = getSetSize(cStack);
+                                if (cStackSize == 1) {
+                                    callStackDataTy::iterator cStackIterator = cStack.begin();
+                                    const callStackEntry *caller = *cStackIterator;
+                                    taintState ttState = NotFound;
+                                    if (caller->getCallerName().compare("strlen") == 0) {
+                                        if (caller->getValue()->getAsRegion()) {
+                                            ttState = getTaintState(state, caller->getValue()->getAsRegion());
+                                            //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - stackReg - " << ttState << " - " << caller->getValue() << ".\n";
+                                        } else {
+                                            ttState = getTaintState(state, caller->getValue());
+                                            //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - stackSV - " << ttState << " - " << caller->getValue() << ".\n";
+                                        }
+                                    }
+                                    //sValSize = getMREstimatedSize(state, caller->getValue());
+                                    state = state->remove<callStackData>();
+                                } else {
+                                    sValSize = getMREstimatedSize(state, Call.getArgSVal(2).getAsRegion());
+                                }
                             }
-                            //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(2) << ".\n";
+                            //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint Size - " << FInfo->getNameStart() << " - size -  " << sValDstSize << " - " << sValSrcSize << " - " << sValSize << ".\n";
                             if (sValSize.getZExtValue() > sValDstSize.getZExtValue()) {
                                 if (!isMRStored(state, Call.getArgSVal(0).getAsRegion())) {
-                                    state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), Tainted));
+                                    SVal *tmpSV = new SVal(Call.getArgSVal(0));
+                                    state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), tmpSV, Tainted));
                                 }
                                 if (ExplodedNode * N = C.addTransition()) {
                                     if (!BT_sizeMismatchBug)
@@ -570,16 +607,6 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                     }
                                 }
                             }
-                        } else {/*
-                            if (isMRStored(state, Call.getArgSVal(1).getAsRegion())) {
-                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
-                            } else {
-                                if (isMRStored(state, Call.getArgSVal(0).getAsRegion())) {
-                                    llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint 0 - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
-                                } else {
-                                    llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint !0 !1- " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpTaintState << ".\n";
-                                }
-                            }*/
                         }
                     }
                     if (tmpTaintState == Tainted) {
@@ -608,7 +635,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                     }
                 }
                 if (SR.compare("socket") == 0) {
-                    state = state->add<callStackData>(new callStackEntry(C.getSVal(CallE), FInfo->getName()));
+                    SVal *tmpSV = new SVal(C.getSVal(CallE));
+                    state = state->add<callStackData>(new callStackEntry(tmpSV, FInfo->getName()));
                 }
             }
         }
@@ -629,9 +657,10 @@ void ExperimentalChecker::checkBind(SVal Loc, SVal Val, const Stmt* S, CheckerCo
             callStackDataTy::iterator cStackIterator = cStack.begin();
             const callStackEntry *caller = *cStackIterator;
             if (caller->getCallerName().compare("socket") == 0) {
-                state = state->add<aditionalValueData>(new taintPropagationData(Loc.getAsRegion(), Tainted));
+                SVal *tmpSV = new SVal(Loc);
+                state = state->add<aditionalValueData>(new taintPropagationData(Loc.getAsRegion(), tmpSV, Tainted));
             }
-            //state = state->remove<callStackData>();            
+            state = state->remove<callStackData>();
         }
     } else {
         QualType valTy;
@@ -695,7 +724,8 @@ void ExperimentalChecker::checkPreStmt(const CallExpr* CE, CheckerContext & C) c
         for (int i = 0; i < nParams; ++i) {
             SVal pSV = state->getLValue(FD->getParamDecl(i)->getCanonicalDecl(), C.getLocationContext());
             if (!isMRStored(state, pSV.getAsRegion())) {
-                state = state->add<aditionalValueData>(new taintPropagationData(pSV.getAsRegion(), Tainted));
+                SVal *tmpSV = new SVal(pSV);
+                state = state->add<aditionalValueData>(new taintPropagationData(pSV.getAsRegion(), tmpSV, Tainted));
 #ifdef DEBUG
                 llvm::outs() << " - Pre STMT - main - Taint: " << pSV.getAsRegion() << ".\n";
 #endif
@@ -867,7 +897,7 @@ aditionalValueDataTy::iterator ExperimentalChecker::findAditionalValue(aditional
 #ifdef DEBUG_CMP
         llvm::outs() << "CMP: (" << (*I)->getMemRegion()->getString() << " - " << MR->getString() << ").\n";
 #endif
-        if (((taintPropagationData) **I) == MR) {
+        if ((*I)->getMemRegion() == MR) {
 #ifdef DEBUG_CMP
             llvm::outs() << "Found: " << MR->getString() << ".\n";
 #endif
@@ -905,6 +935,23 @@ aditionalValueDataTy::iterator ExperimentalChecker::findAditionalValue(aditional
 
 }
 
+aditionalValueDataTy::iterator ExperimentalChecker::findAditionalValue(aditionalValueDataTy::iterator begin, aditionalValueDataTy::iterator end, SVal *SV) const {
+    aditionalValueDataTy::iterator I = begin;
+
+    for (; I != end; ++I) {
+        //TODOstd::string tS(SV->castAs<nonloc::SymbolVal>());
+        //llvm::outs() << "SV cc " << tS << ".\n";
+        if ((*I)->getSVal() == SV) {
+            //  llvm::outs() << "Found " << *SV << ".\n";
+            break;
+        } else {
+            // llvm::outs() << "SV dump " << *SV << ".\n";
+            //SV->dump();
+        }
+    }
+    return I;
+}
+
 taintState ExperimentalChecker::getTaintState(ProgramStateRef State, const MemRegion * MR) const {
     if (!MR) {
         return NotFound;
@@ -929,6 +976,25 @@ taintState ExperimentalChecker::getTaintState(ProgramStateRef State, const MemRe
 #ifdef DEBUG
         llvm::outs() << "GTS - Found: " << ((taintPropagationData)**I).getMemRegion() << " = " << MR->getString() << " - " << ((taintPropagationData)**I).getTaintState() << ".\n";
 #endif
+        return ((taintPropagationData)**I).getTaintState();
+    }
+}
+
+taintState ExperimentalChecker::getTaintState(ProgramStateRef State, SVal *SV) const {
+    if (!SV) {
+        return NotFound;
+    }
+    aditionalValueDataTy ASet = State->get<aditionalValueData>();
+    aditionalValueDataTy::iterator sEnd = ASet.end();
+
+    if (ASet.isEmpty()) {
+        return NotFound;
+    }
+    aditionalValueDataTy::iterator I = findAditionalValue(ASet.begin(), sEnd, SV);
+
+    if (I == sEnd) {
+        return NotFound;
+    } else {
         return ((taintPropagationData)**I).getTaintState();
     }
 }
@@ -1033,6 +1099,9 @@ void ExperimentalChecker::dumpAditionalValues(ProgramStateRef State) const {
     int i = 0;
     for (aditionalValueDataTy::iterator I = ASet.begin(); I != sEnd; ++I, ++i) {
         llvm::outs() << "Dump " << i << ": " << ((taintPropagationData)**I).getMemRegion();
+        if (((taintPropagationData)**I).getSVal()) {
+            llvm::outs() << "Dump SVal " << i << ": " << *(((taintPropagationData)**I).getSVal());
+        }
         switch (((taintPropagationData)**I).getTaintState()) {
             case Tainted:
                 llvm::outs() << " - Tainted";
