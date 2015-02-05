@@ -375,9 +375,14 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 #endif
                             SVal *tmpSV = new SVal(C.getSVal(CallE));
                             if (dependency->getCallerName().compare("strlen") == 0) {
-                                //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - Add - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << dependency->getValue() << ".\n";
+                                #ifdef DEBUG
+                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - Add - " << FInfo->getNameStart() << " - " << C.getSVal(CallE) << " depend on " << *dependency->getValue() << ".\n";
+#endif
                                 state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, dependency->getValue()->getAsRegion()));
                             } else {
+                                #ifdef DEBUG
+                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - DEP - Add - " << FInfo->getNameStart() << " - " << C.getSVal(CallE) << " depend on " << Call.getArgSVal(0) << ".\n";
+#endif
                                 state = state->add<aditionalValueData>(new taintPropagationData(C.getSVal(CallE).getAsRegion(), tmpSV, Call.getArgSVal(0).getAsRegion()));
                             }
                             state = state->remove<callStackData>();
@@ -430,23 +435,30 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
 
                 }
                 if (SR.compare("strlen") == 0) {
+                    SVal *tmpSV = new SVal(Call.getArgSVal(0)); // argument or return value?
 #ifdef DEBUG
-                    llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - AP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << ".\n";
+                    llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Post Call - " << FInfo->getNameStart() << " - add dependency to callStack - " << *tmpSV << ".\n";
 #endif
-                    SVal *tmpSV = new SVal(C.getSVal(CallE));
                     state = state->add<callStackData>(new callStackEntry(tmpSV, FInfo->getName()));
                 }
             }
             if (nArgs == 2) {
                 if (SR.compare("strcpy") == 0) {
                     taintState tmpTaintState = getTaintState(state, Call.getArgSVal(1).getAsRegion());
-                    //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - AP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(1).getAsRegion() << " - " << tmpTaintState << ".\n";
+#ifdef DEBUG
+                    llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - AP - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(1).getAsRegion() << " - " << tmpTaintState << ".\n";
+#endif
                     if (tmpTaintState == Tainted) {
                         if (isMRStored(state, Call.getArgSVal(0).getAsRegion())) {
                             taintState tmpDestTaintState = getTaintState(state, Call.getArgSVal(0).getAsRegion());
-                            //llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - A - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpDestTaintState << ".\n";
+#ifdef DEBUG
+                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - tmpTaint - A - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << " - " << tmpDestTaintState << ".\n";
+#endif
                             if (tmpDestTaintState == Dependent) {
                                 const MemRegion * depenency = getDependency(state, Call.getArgSVal(0).getAsRegion());
+#ifdef DEBUG
+                                llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Dependency - " << Call.getArgSVal(0) << " - " << cStackSize << ".\n";
+#endif
                                 if (!depenency) {
                                     SVal *tmpSV = new SVal(Call.getArgSVal(0));
                                     state = state->add<aditionalValueData>(new taintPropagationData(Call.getArgSVal(0).getAsRegion(), tmpSV, Tainted));
@@ -481,6 +493,8 @@ void ExperimentalChecker::checkPostCall(const CallEvent& Call, CheckerContext& C
                                     C.emitReport(report);
                                 }
                             }
+                        } else {
+                            llvm::outs() << "(" << C.getSourceManager().getSpellingLineNumber(CallE->getLocStart()) << ") - Dest Not Stored - " << FInfo->getNameStart() << " - returns " << C.getSVal(CallE) << " - " << Call.getArgSVal(0).getAsRegion() << ".\n";
                         }
                     }
                     if (tmpTaintState == OK) {
@@ -752,24 +766,24 @@ void ExperimentalChecker::checkPostStmt(const Expr *E, CheckerContext & C) const
     llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Post STMT - Start: " << S << ".\n";
 #endif
     if (getTaintState(state, S.getAsRegion()) == Tainted) {
-        //  llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Tainted: " << S << ".\n";
+#ifdef DEBUG
+        llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Tainted: " << S << ".\n";
+#endif
     } else {
+#ifdef DEBUG
         // llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Not Tainted: " << S << ".\n";
+#endif
     }
-    //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Post Expr STMT: " << S <<" - "<< S.getBaseKind() << ".\n";
-
     const MemRegion *MR = S.getAsRegion();
     if (!MR) {
-        //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Not MR " << S << ".\n";
         return;
     }
-    //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Post STMT Kind: " << MR->getString() << " - " << S << " " << MR->getKind() << ".\n";
     switch (MR->getKind()) {
         case MemRegion::ElementRegionKind:
             //ER = MR->getAs<ElementRegion>();
             //llvm::outs() << C.getSourceManager().getSpellingLineNumber(E->getLocStart()) << " - Post STMT Element+TNT: " << ER->getSuperRegion()->getString() << " - " << S << " " << MR->getKind() << ".\n";
             //state = state->add<aditionalValueData>(new aditionalData(ER->getSuperRegion(), Tainted));
-            break;
+            //break;
         case MemRegion::SymbolicRegionKind:
             //state = state->add<aditionalValueData>(new aditionalData(MR, Tainted));
             break;
@@ -939,14 +953,15 @@ aditionalValueDataTy::iterator ExperimentalChecker::findAditionalValue(aditional
     aditionalValueDataTy::iterator I = begin;
 
     for (; I != end; ++I) {
-        //TODOstd::string tS(SV->castAs<nonloc::SymbolVal>());
-        //llvm::outs() << "SV cc " << tS << ".\n";
         if ((*I)->getSVal() == SV) {
-            //  llvm::outs() << "Found " << *SV << ".\n";
+#ifdef DEBUG_CMP
+            llvm::outs() << "Found: " << *SV << ".\n";
+#endif
             break;
         } else {
-            // llvm::outs() << "SV dump " << *SV << ".\n";
-            //SV->dump();
+#ifdef DEBUG_CMP
+            llvm::outs() << "Not found: " << *SV << ".\n";
+#endif            
         }
     }
     return I;
@@ -1012,7 +1027,6 @@ llvm::APInt ExperimentalChecker::getMREstimatedSize(ProgramStateRef State, const
     }
 
     aditionalValueDataTy::iterator I = findAditionalValue(ASet.begin(), sEnd, MR);
-
     if (I == sEnd) {
 #ifdef DEBUG
         llvm::outs() << "GMRE - Not found: " << " - " << MR->getString() << ".\n";
